@@ -26,6 +26,16 @@ const definition: ContentScriptDefinition = defineContentScript({
 
     bus();
 
+    // Templates for write-back: the MAIN-world sniffer reports the real
+    // chat-send request the app makes; store it so postChatMessage can
+    // replay the exact shape (survives Anthropic backend changes).
+    window.addEventListener("message", (ev) => {
+      if (ev.source !== window || ev.data?.source !== "cbm-sniffer") return;
+      void browser.runtime
+        .sendMessage({ kind: "captureCompletion", url: ev.data.url, body: ev.data.body })
+        .catch(() => {});
+    });
+
     function setFab(label: string, building: boolean): void {
       if (!fab) return;
       fab.textContent = label;

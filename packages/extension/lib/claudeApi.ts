@@ -1,3 +1,4 @@
+import { browser } from "wxt/browser";
 import type {
   ClaudeChatMessage,
   ClaudeConversation,
@@ -131,30 +132,59 @@ async function leafMessageUuid(org: string, convId: string): Promise<string> {
   return msgs.length ? msgs[msgs.length - 1].uuid : ROOT_PARENT;
 }
 
+type CompletionTemplate = { url: string; body: Record<string, unknown>; capturedAt: number };
+
+async function completionTemplate(): Promise<CompletionTemplate | null> {
+  const { completionTemplate } = await browser.storage.local.get("completionTemplate");
+  const t = completionTemplate as CompletionTemplate | undefined;
+  return t && typeof t.url === "string" && t.body ? t : null;
+}
+
+/** Point a captured request URL at the current org + conversation. */
+function retargetUrl(templateUrl: string, org: string, convId: string): string {
+  try {
+    const u = new URL(templateUrl, location.origin);
+    u.pathname = u.pathname
+      .replace(/\/organizations\/[0-9a-f-]{36}/i, `/organizations/${org}`)
+      .replace(/\/chat_conversations\/[0-9a-f-]{36}/i, `/chat_conversations/${convId}`);
+    return u.pathname + u.search;
+  } catch {
+    return templateUrl;
+  }
+}
+
 /** Post a message into the live chat as the user (keeps chat-Claude aware). */
 export async function postChatMessage(text: string): Promise<void> {
   const convId = currentConvId();
   if (!convId) throw new Error("not on a conversation page");
   const org = await getOrg();
-  const url = `/api/organizations/${org}/chat_conversations/${convId}/completion`;
+  // Prefer the captured real request shape (sniffer); fall back to the
+  // documented legacy endpoint for accounts still on the old backend.
+  const tpl = await completionTemplate();
 
   let lastError = "completion failed";
   for (let attempt = 0; attempt < 4; attempt++) {
     // Refetch the leaf each try — it changes if the chat moved on or a
     // previous attempt landed a message before erroring mid-generation.
     const parent = await leafMessageUuid(org, convId);
+    const url = tpl
+      ? retargetUrl(tpl.url, org, convId)
+      : `/api/organizations/${org}/chat_conversations/${convId}/completion`;
+    const payload = tpl
+      ? { ...tpl.body, prompt: text, parent_message_uuid: parent }
+      : {
+          prompt: text,
+          parent_message_uuid: parent,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
+          attachments: [],
+          files: [],
+          rendering_mode: "messages",
+        };
     const res = await fetch(url, {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        prompt: text,
-        parent_message_uuid: parent,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
-        attachments: [],
-        files: [],
-        rendering_mode: "messages",
-      }),
+      body: JSON.stringify(payload),
     });
     if (res.ok) {
       // Response is SSE for a generation that continues server-side — drain

@@ -146,6 +146,17 @@ const definition: BackgroundDefinition = defineBackground(() => {
     }
   });
 
+  // Sniffer → storage: remember the real chat-send request shape.
+  browser.runtime.onMessage.addListener((raw: unknown) => {
+    const m = raw as { kind?: string; url?: string; body?: unknown };
+    if (m?.kind !== "captureCompletion" || typeof m.url !== "string" || !m.body) return;
+    const body = m.body as Record<string, unknown>;
+    if (typeof body.prompt !== "string" || !body.prompt.trim()) return;
+    void browser.storage.local.set({
+      completionTemplate: { url: m.url, body, capturedAt: Date.now() },
+    });
+  });
+
   browser.runtime.onConnect.addListener((port) => {
     if (port.name !== "cbm") return;
     ports.add(port);
