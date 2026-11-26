@@ -43,6 +43,15 @@ export const PANEL_CSS = `
 }
 .cbm-perm .prow { display: flex; gap: 6px; }
 .cbm-result { color: #4f8a52; font-weight: 600; }
+.cbm-diff {
+  margin: 0; background: #1f1e1d; border-radius: 6px; padding: 7px 9px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  line-height: 1.5; overflow-x: auto; max-height: 220px; overflow-y: auto;
+}
+.cbm-diff .dp { color: #7bc98c; }
+.cbm-diff .dm { color: #e8837a; }
+.cbm-diff .dc { color: #8a8580; }
+.cbm-diff .dfile { color: #d9a657; font-weight: 600; display: block; margin-bottom: 2px; }
 .cbm-footer { border-top: 1px solid #e3e0dc; padding: 8px 12px; display: flex; gap: 6px; }
 .cbm-footer input {
   flex: 1; border: 1px solid #d8d4cf; border-radius: 6px; padding: 6px 8px;

@@ -131,6 +131,44 @@ export class BuildPanel {
     this.add(box);
   }
 
+  /** Render diffs carried inside tool_use_result (bashEditDiff / structuredPatch / Write). */
+  private toolResult(result: Record<string, unknown>): void {
+    interface Hunk { lines?: string[] }
+    interface DiffFile { filePath?: string; hunks?: Hunk[] }
+    const files: DiffFile[] =
+      ((result.bashEditDiff as { files?: DiffFile[] } | undefined)?.files ?? null) ??
+      (((result.structuredPatch as Hunk[] | undefined) && [
+        { filePath: result.filePath as string, hunks: result.structuredPatch as Hunk[] },
+      ]) || null) ??
+      [];
+    const created = result.type === "create" && typeof result.content === "string";
+
+    if (files.length === 0 && !created) return;
+    const pre = document.createElement("pre");
+    pre.className = "cbm-diff";
+    for (const f of files) {
+      pre.appendChild(el("span", "dfile", String(f.filePath ?? "file")));
+      for (const h of f.hunks ?? []) {
+        for (const l of (h.lines ?? []).slice(0, 40)) {
+          const span = document.createElement("span");
+          span.className = l.startsWith("+") ? "dp" : l.startsWith("-") ? "dm" : "dc";
+          span.textContent = l + "\n";
+          pre.appendChild(span);
+        }
+      }
+    }
+    if (created) {
+      pre.appendChild(el("span", "dfile", String(result.filePath ?? "new file")));
+      for (const l of String(result.content).split("\n").slice(0, 40)) {
+        const span = document.createElement("span");
+        span.className = "dp";
+        span.textContent = "+" + l + "\n";
+        pre.appendChild(span);
+      }
+    }
+    this.add(pre);
+  }
+
   private permCard(r: PermissionRequest): void {
     const card = el("div", "cbm-perm");
     card.append(el("div", "ptitle", `${r.toolName} wants to run`));
@@ -140,7 +178,7 @@ export class BuildPanel {
     card.appendChild(pre);
     const row = el("div", "prow");
     const allow = el("button", "cbm-btn", "Allow") as HTMLButtonElement;
-    const always = el("button", "cbm-btn ghost", "Always") as HTMLButtonElement;
+    const always = el("button", "cbm-btn ghost", `Always ${r.toolName}`) as HTMLButtonElement;
     const deny = el("button", "cbm-btn deny", "Deny") as HTMLButtonElement;
     const finish = (d: "allow" | "deny" | "always") => {
       this.pendingPerms.delete(r.requestId);
@@ -166,6 +204,8 @@ export class BuildPanel {
             else if (b.type === "tool_use")
               this.toolUse(String(b.name ?? "tool"), (b.input as Record<string, unknown>) ?? {});
           }
+        } else if (e.type === "user" && e.tool_use_result) {
+          this.toolResult(e.tool_use_result as Record<string, unknown>);
         } else if (e.type === "system" && e.subtype === "init") {
           this.sys(`connected · ${e.cwd ?? ""}`);
         } else if (e.type === "system" && e.subtype === "permission_denied") {

@@ -204,7 +204,10 @@ const definition: ContentScriptDefinition = defineContentScript({
           const live = msg.sessions.find((s) => s.convId === conv && s.running);
           if (live) {
             sessionId = live.sessionId;
+            sessionCwd = live.cwd;
             setFab("⚡ Building…", true);
+            const p = ensurePanel();
+            p.sys(`reattached to running session · ${live.cwd}`);
           }
         }
       } else if (msg.type === "hello_ok") {
