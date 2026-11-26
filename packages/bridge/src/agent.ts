@@ -52,6 +52,7 @@ export class AgentSession extends EventEmitter {
   private buf = "";
   ended = false;
   sessionId: string | null = null;
+  pid: number | undefined;
 
   constructor(convId: string, opts: AgentOptions) {
     super();
@@ -81,6 +82,7 @@ export class AgentSession extends EventEmitter {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
     });
+    this.pid = this.proc.pid;
 
     this.proc.stdout!.setEncoding("utf8");
     this.proc.stdout!.on("data", (chunk: string) => this.onChunk(chunk));

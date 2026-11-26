@@ -73,6 +73,26 @@ export function createCore(cfg: BridgeConfig, mcpListenPort: number): Core {
     return h;
   }
 
+  function pidAlive(pid: number | undefined): boolean {
+    if (!pid) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code === "EPERM";
+    }
+  }
+
+  /** A registry session whose agent is still alive under *another* bridge
+   *  instance (e.g. WS daemon vs native host) blocks resume — reap it. */
+  function reapOrphan(rec: SessionRecord | null): void {
+    if (!rec?.agentPid || !pidAlive(rec.agentPid)) return;
+    try {
+      process.kill(rec.agentPid, "SIGINT");
+    } catch {}
+    registry.touch(rec.sessionId, { running: false, agentPid: undefined });
+  }
+
   function attachAgent(agent: AgentSession, rec: SessionRecord): void {
     liveAgents.set(agent.id, agent);
     agent.on("event", (e) => {
@@ -84,7 +104,7 @@ export function createCore(cfg: BridgeConfig, mcpListenPort: number): Core {
     });
     agent.on("ended", (code) => {
       liveAgents.delete(agent.id);
-      registry.touch(rec.sessionId, { running: false });
+      registry.touch(rec.sessionId, { running: false, agentPid: undefined });
       broadcast({ type: "session_ended", sessionId: agent.id, code });
     });
   }
@@ -200,6 +220,7 @@ export function createCore(cfg: BridgeConfig, mcpListenPort: number): Core {
             sink.send({ type: "session_started", sessionId: existing.sessionId, convId: msg.convId });
             break;
           }
+          reapOrphan(existing);
           const resumeId = existing ? existing.sessionId : undefined;
           const sessionId = resumeId ?? randomUUID();
           const agent = startAgent({
@@ -207,7 +228,9 @@ export function createCore(cfg: BridgeConfig, mcpListenPort: number): Core {
             cwd: v.path,
             transcript: resumeId ? undefined : msg.transcript,
             permissionProfile: msg.permissionProfile,
-            prompt: msg.prompt,
+            // Resuming with no instruction still needs a first turn on stdin —
+            // a bare claude process waits silently forever.
+            prompt: msg.prompt ?? (resumeId ? "Continue from where you left off." : undefined),
             resumeId,
             sessionId: resumeId ? undefined : sessionId,
             mcpUrl: `${mcpBase()}/${sessionId}`,
@@ -220,6 +243,7 @@ export function createCore(cfg: BridgeConfig, mcpListenPort: number): Core {
             startedAt: existing?.startedAt ?? new Date().toISOString(),
             lastActiveAt: new Date().toISOString(),
             running: true,
+            agentPid: agent.pid,
           };
           registry.upsertSession(rec);
           alwaysAllowed.set(sessionId, new Set());
@@ -238,6 +262,7 @@ export function createCore(cfg: BridgeConfig, mcpListenPort: number): Core {
             sink.send({ type: "session_started", sessionId: rec.sessionId, convId: rec.convId });
             break;
           }
+          reapOrphan(rec);
           const agent = startAgent({
             convId: rec.convId,
             cwd: rec.cwd,
@@ -245,7 +270,7 @@ export function createCore(cfg: BridgeConfig, mcpListenPort: number): Core {
             resumeId: rec.sessionId,
             mcpUrl: `${mcpBase()}/${rec.sessionId}`,
           });
-          registry.upsertSession({ ...rec, running: true });
+          registry.upsertSession({ ...rec, running: true, agentPid: agent.pid });
           alwaysAllowed.set(rec.sessionId, new Set());
           attachAgent(agent, { ...rec, running: true });
           sink.send({ type: "session_started", sessionId: rec.sessionId, convId: rec.convId });

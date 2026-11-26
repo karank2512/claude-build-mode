@@ -120,6 +120,8 @@ export interface SessionRecord {
   startedAt: string;
   lastActiveAt: string;
   running: boolean;
+  /** PID of the spawned claude process — detects orphans across bridge instances. */
+  agentPid?: number;
 }
 
 export interface PermissionRequest {
