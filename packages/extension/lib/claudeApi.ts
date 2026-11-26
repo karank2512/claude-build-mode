@@ -114,27 +114,42 @@ export async function fetchTranscript(): Promise<Transcript> {
   }
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /** Post a message into the live chat as the user (keeps chat-Claude aware). */
 export async function postChatMessage(text: string): Promise<void> {
   const convId = currentConvId();
   if (!convId) throw new Error("not on a conversation page");
   const org = await getOrg();
-  const res = await fetch(
-    `/api/organizations/${org}/chat_conversations/${convId}/completion`,
-    {
+  const url = `/api/organizations/${org}/chat_conversations/${convId}/completion`;
+  const body = JSON.stringify({
+    prompt: text,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
+    attachments: [],
+    files: [],
+    rendering_mode: "messages",
+  });
+
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url, {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        prompt: text,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
-        attachments: [],
-        files: [],
-        rendering_mode: "messages",
-      }),
-    },
-  );
-  if (!res.ok) throw new Error(`completion -> ${res.status}`);
-  // Response is SSE; let the page's own app render it — just consume the stream.
-  await res.text();
+      body,
+    });
+    if (res.ok) {
+      // Response is SSE for a generation that continues server-side — drain
+      // briefly so the message commits, then move on. The web app renders it
+      // on its own next sync (or a refresh).
+      await Promise.race([res.text(), sleep(15_000)]);
+      return;
+    }
+    lastStatus = res.status;
+    // 409 = a completion is already in-flight for this conversation; the
+    // conflict is transient, so wait it out and retry.
+    if (res.status !== 409) break;
+    await sleep(2000 * (attempt + 1));
+  }
+  throw new Error(`completion -> ${lastStatus}`);
 }
