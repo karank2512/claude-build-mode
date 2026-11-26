@@ -1,13 +1,13 @@
 import { defineContentScript } from "wxt/utils/define-content-script";
 
 /**
- * Runs in the page's MAIN world. Wraps fetch/XHR and reports any request that
- * looks like a chat-send (POST to /api/... with a JSON body containing
- * "prompt") back to the isolated content script via postMessage.
+ * Runs in the page's MAIN world. Wraps fetch/XHR and reports every POST to
+ * /api/ with a JSON body back to the isolated content script via postMessage.
  *
  * Purpose: learn the exact endpoint + payload shape the live web app uses, so
  * chat write-back stays correct across Anthropic's backend changes (e.g. the
- * "new Claude experience" migration, where the old completion endpoint 409s).
+ * "new Claude experience" migration, where the old completion endpoint 409s
+ * and the send path may not use a `prompt` field at all).
  */
 export default defineContentScript({
   matches: ["https://claude.ai/*"],
@@ -16,10 +16,10 @@ export default defineContentScript({
 
   main() {
     const report = (url: string, body: unknown) => {
-      if (typeof body !== "string") return;
+      if (typeof body !== "string" || body.length > 20000) return;
       try {
         const parsed = JSON.parse(body) as Record<string, unknown>;
-        if (typeof parsed?.prompt === "string" && parsed.prompt.trim()) {
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           window.postMessage({ source: "cbm-sniffer", url, body: parsed }, "*");
         }
       } catch {}

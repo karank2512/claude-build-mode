@@ -146,15 +146,17 @@ const definition: BackgroundDefinition = defineBackground(() => {
     }
   });
 
-  // Sniffer → storage: remember the real chat-send request shape.
+  // Sniffer → storage: ring of recent /api/ POST shapes; postChatMessage
+  // picks the one that looks like a chat-send.
   browser.runtime.onMessage.addListener((raw: unknown) => {
     const m = raw as { kind?: string; url?: string; body?: unknown };
     if (m?.kind !== "captureCompletion" || typeof m.url !== "string" || !m.body) return;
-    const body = m.body as Record<string, unknown>;
-    if (typeof body.prompt !== "string" || !body.prompt.trim()) return;
-    void browser.storage.local.set({
-      completionTemplate: { url: m.url, body, capturedAt: Date.now() },
-    });
+    void (async () => {
+      const { capturedApiPosts } = await browser.storage.local.get("capturedApiPosts");
+      const posts = Array.isArray(capturedApiPosts) ? capturedApiPosts : [];
+      posts.push({ url: m.url, body: m.body, capturedAt: Date.now() });
+      await browser.storage.local.set({ capturedApiPosts: posts.slice(-8) });
+    })();
   });
 
   browser.runtime.onConnect.addListener((port) => {

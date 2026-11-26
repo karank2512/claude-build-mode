@@ -132,12 +132,54 @@ async function leafMessageUuid(org: string, convId: string): Promise<string> {
   return msgs.length ? msgs[msgs.length - 1].uuid : ROOT_PARENT;
 }
 
-type CompletionTemplate = { url: string; body: Record<string, unknown>; capturedAt: number };
+type CapturedPost = { url: string; body: Record<string, unknown>; capturedAt: number };
 
-async function completionTemplate(): Promise<CompletionTemplate | null> {
-  const { completionTemplate } = await browser.storage.local.get("completionTemplate");
-  const t = completionTemplate as CompletionTemplate | undefined;
-  return t && typeof t.url === "string" && t.body ? t : null;
+const TEXT_KEYS = ["prompt", "message", "text", "content", "input"];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Most recent captured POST that looks like a chat-send, or null. */
+async function bestCapturedSend(): Promise<CapturedPost | null> {
+  const { capturedApiPosts } = await browser.storage.local.get("capturedApiPosts");
+  const posts = (Array.isArray(capturedApiPosts) ? capturedApiPosts : []) as CapturedPost[];
+  const score = (p: CapturedPost) =>
+    (TEXT_KEYS.some((k) => typeof p.body?.[k] === "string") ? 10 : 0) +
+    (/completion|message|send|conversation/i.test(p.url) ? 3 : 0);
+  let best: CapturedPost | null = null;
+  for (const p of posts.slice().reverse()) {
+    if (!p?.url || typeof p.body !== "object") continue;
+    const s = score(p);
+    if (s > 0 && (!best || s > score(best))) best = p;
+  }
+  return best;
+}
+
+/** Clone the captured body with our prompt + fresh parent uuid swapped in. */
+function adaptBody(tpl: Record<string, unknown>, text: string, parent: string): string {
+  const body = structuredClone(tpl);
+  let placed = false;
+  for (const k of TEXT_KEYS) {
+    if (typeof body[k] === "string") {
+      body[k] = text;
+      placed = true;
+      break;
+    }
+  }
+  if (!placed) {
+    // Fall back to the longest top-level string field as the message slot.
+    let bestKey: string | null = null;
+    for (const [k, v] of Object.entries(body)) {
+      if (typeof v === "string" && (!bestKey || v.length > (body[bestKey] as string).length))
+        bestKey = k;
+    }
+    if (bestKey) body[bestKey] = text;
+    else body.prompt = text;
+  }
+  // Refresh any parent-uuid field; don't invent one the shape doesn't have.
+  for (const k of Object.keys(body)) {
+    if (/^parent/i.test(k) && typeof body[k] === "string" && UUID_RE.test(body[k] as string))
+      body[k] = parent;
+  }
+  return JSON.stringify(body);
 }
 
 /** Point a captured request URL at the current org + conversation. */
@@ -160,7 +202,7 @@ export async function postChatMessage(text: string): Promise<void> {
   const org = await getOrg();
   // Prefer the captured real request shape (sniffer); fall back to the
   // documented legacy endpoint for accounts still on the old backend.
-  const tpl = await completionTemplate();
+  const tpl = await bestCapturedSend();
 
   let lastError = "completion failed";
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -170,21 +212,21 @@ export async function postChatMessage(text: string): Promise<void> {
     const url = tpl
       ? retargetUrl(tpl.url, org, convId)
       : `/api/organizations/${org}/chat_conversations/${convId}/completion`;
-    const payload = tpl
-      ? { ...tpl.body, prompt: text, parent_message_uuid: parent }
-      : {
+    const body = tpl
+      ? adaptBody(tpl.body, text, parent)
+      : JSON.stringify({
           prompt: text,
           parent_message_uuid: parent,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
           attachments: [],
           files: [],
           rendering_mode: "messages",
-        };
+        });
     const res = await fetch(url, {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      body,
     });
     if (res.ok) {
       // Response is SSE for a generation that continues server-side — drain
