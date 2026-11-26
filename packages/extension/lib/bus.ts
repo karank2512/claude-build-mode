@@ -29,7 +29,13 @@ export function bus(): { send: (m: ClientMessage) => void; reconnect: () => void
       lastState = "closed";
       lastAuthed = false;
       for (const l of stateListeners) l("closed", false);
-      setTimeout(() => bus(), 1000); // reconnect port
+      setTimeout(() => {
+        // After an extension reload this context is dead — reconnecting
+        // throws "Extension context invalidated"; just stop.
+        try {
+          if (browser.runtime.id) bus();
+        } catch {}
+      }, 1000);
     });
   }
   return {
