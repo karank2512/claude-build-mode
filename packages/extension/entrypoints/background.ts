@@ -9,12 +9,17 @@ type PortMsg =
   | { kind: "getState" };
 
 const DEFAULT_PORT = 17819;
+const NATIVE_HOST = "com.cbm.bridge";
+
+type Port = ReturnType<typeof browser.runtime.connect>;
 
 let ws: WebSocket | null = null;
+let nativePort: Port | null = null;
+let transport: "native" | "ws" | null = null;
 let wsState: "connecting" | "open" | "closed" = "closed";
 let authed = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-const ports = new Set<ReturnType<typeof browser.runtime.connect>>();
+const ports = new Set<Port>();
 
 async function bridgeConfig(): Promise<{ port: number; token: string }> {
   const { bridgePort, bridgeToken } = await browser.storage.local.get([
@@ -39,10 +44,60 @@ function broadcast(msg: unknown): void {
 
 function setState(state: typeof wsState): void {
   wsState = state;
-  broadcast({ kind: "bridgeState", state, authed });
+  broadcast({ kind: "bridgeState", state, authed, transport });
 }
 
-async function connect(): Promise<void> {
+function sendRaw(msg: ClientMessage): void {
+  if (transport === "native" && nativePort) {
+    try {
+      nativePort.postMessage(msg);
+    } catch {}
+  } else if (transport === "ws" && ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+function onBridgeMessage(raw: unknown): void {
+  const msg = (typeof raw === "string" ? safeParse(raw) : raw) as ServerMessage;
+  if (!msg || typeof msg !== "object") return;
+  if (msg.type === "hello_ok") authed = true;
+  broadcast({ kind: "fromBridge", msg });
+}
+
+function safeParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+/** Product path: Chrome spawns the bridge itself via native messaging. */
+function connectNative(): boolean {
+  try {
+    nativePort = browser.runtime.connectNative(NATIVE_HOST);
+  } catch {
+    return false;
+  }
+  transport = "native";
+  nativePort.onMessage.addListener(onBridgeMessage);
+  nativePort.onDisconnect.addListener(() => {
+    // Missing host lands here with "Specified native messaging host not found"
+    nativePort = null;
+    if (transport === "native") {
+      transport = null;
+      authed = false;
+      setState("closed");
+      void connectWs();
+    }
+  });
+  setState("open");
+  sendRaw({ type: "hello", token: "native", version: browser.runtime.getManifest().version });
+  return true;
+}
+
+/** Dev path: manually started WS daemon, token-gated. */
+async function connectWs(): Promise<void> {
   const { port, token } = await bridgeConfig();
   if (!token) {
     setState("closed");
@@ -54,23 +109,16 @@ async function connect(): Promise<void> {
     scheduleReconnect();
     return;
   }
+  transport = "ws";
   setState("connecting");
   ws.onopen = () => {
     setState("open");
-    ws!.send(JSON.stringify({ type: "hello", token, version: browser.runtime.getManifest().version }));
+    sendRaw({ type: "hello", token, version: browser.runtime.getManifest().version });
   };
-  ws.onmessage = (ev) => {
-    let msg: ServerMessage;
-    try {
-      msg = JSON.parse(String(ev.data));
-    } catch {
-      return;
-    }
-    if (msg.type === "hello_ok") authed = true;
-    broadcast({ kind: "fromBridge", msg });
-  };
+  ws.onmessage = (ev) => onBridgeMessage(String(ev.data));
   ws.onclose = () => {
     authed = false;
+    transport = null;
     setState("closed");
     scheduleReconnect();
   };
@@ -81,24 +129,20 @@ function scheduleReconnect(): void {
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    void connect();
+    if (!connectNative()) void connectWs();
   }, 3000);
 }
 
 const definition: BackgroundDefinition = defineBackground(() => {
-  void connect();
+  if (!connectNative()) void connectWs();
 
-  // MV3 service workers can be suspended with an idle WebSocket; ping keeps
-  // the bridge link (and the worker) alive.
+  // Keep the transport alive while MV3 would otherwise suspend the worker.
   browser.alarms.create("cbm-keepalive", { periodInMinutes: 0.45 });
   browser.alarms.onAlarm.addListener((a) => {
     if (a.name !== "cbm-keepalive") return;
-    if (ws?.readyState === WebSocket.OPEN && authed) {
-      try {
-        ws.send(JSON.stringify({ type: "ping" }));
-      } catch {}
-    } else if (wsState === "closed") {
-      void connect();
+    if (authed) sendRaw({ type: "ping" });
+    else if (wsState === "closed") {
+      if (!connectNative()) void connectWs();
     }
   });
 
@@ -107,22 +151,22 @@ const definition: BackgroundDefinition = defineBackground(() => {
     ports.add(port);
     port.onDisconnect.addListener(() => ports.delete(port));
     port.onMessage.addListener((raw: PortMsg) => {
-      if (raw.kind === "toBridge" && ws?.readyState === WebSocket.OPEN && authed) {
-        ws.send(JSON.stringify(raw.msg));
+      if (raw.kind === "toBridge" && authed) {
+        sendRaw(raw.msg);
       } else if (raw.kind === "reconnect") {
         try {
           ws?.close();
+          nativePort?.disconnect();
         } catch {}
-        void connect();
+        if (!connectNative()) void connectWs();
       } else if (raw.kind === "getState") {
         try {
-          port.postMessage({ kind: "bridgeState", state: wsState, authed });
+          port.postMessage({ kind: "bridgeState", state: wsState, authed, transport });
         } catch {}
       }
     });
-    // Push current state immediately.
     try {
-      port.postMessage({ kind: "bridgeState", state: wsState, authed });
+      port.postMessage({ kind: "bridgeState", state: wsState, authed, transport });
     } catch {}
   });
 });

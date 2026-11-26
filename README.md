@@ -95,9 +95,10 @@ packages/shared/      Wire protocol + claude.ai API / stream-json types
 
 ## Roadmap
 
-- [ ] Post build status back into the real conversation so chat-Claude stays
+- [x] Post build status back into the real conversation so chat-Claude stays
       aware of what the agent did
-- [ ] Native messaging host + installer: no token paste, no manual daemon
+- [x] Native messaging host + installer: no token paste, no manual daemon
+      (`npm run install-host -w @cbm/bridge -- --ext-id <id>`)
 - [ ] Diff rendering, finer-grained permission controls, resume UX
 - [ ] Edge/Firefox ports, Web Store release
 

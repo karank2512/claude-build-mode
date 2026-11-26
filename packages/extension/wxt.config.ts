@@ -9,7 +9,7 @@ export default defineConfig({
     description:
       "One-click switch from a Claude chat to a local Claude Code build session — same page, same context, your own plan.",
     version: "0.1.0",
-    permissions: ["storage", "alarms"],
+    permissions: ["storage", "alarms", "nativeMessaging"],
     host_permissions: [
       "https://claude.ai/*",
       "http://127.0.0.1:17819/*",
