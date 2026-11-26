@@ -116,27 +116,45 @@ export async function fetchTranscript(): Promise<Transcript> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const ROOT_PARENT = "00000000-0000-4000-8000-000000000000";
+
+/** Current leaf message uuid — required as parent for a completion POST. */
+async function leafMessageUuid(org: string, convId: string): Promise<string> {
+  const res = await fetch(
+    `/api/organizations/${org}/chat_conversations/${convId}` +
+      `?tree=True&rendering_mode=messages`,
+    { credentials: "include" },
+  );
+  if (!res.ok) throw new Error(`conversation fetch -> ${res.status}`);
+  const conv = (await res.json()) as ClaudeConversation;
+  const msgs = conv.chat_messages ?? [];
+  return msgs.length ? msgs[msgs.length - 1].uuid : ROOT_PARENT;
+}
+
 /** Post a message into the live chat as the user (keeps chat-Claude aware). */
 export async function postChatMessage(text: string): Promise<void> {
   const convId = currentConvId();
   if (!convId) throw new Error("not on a conversation page");
   const org = await getOrg();
   const url = `/api/organizations/${org}/chat_conversations/${convId}/completion`;
-  const body = JSON.stringify({
-    prompt: text,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
-    attachments: [],
-    files: [],
-    rendering_mode: "messages",
-  });
 
-  let lastStatus = 0;
+  let lastError = "completion failed";
   for (let attempt = 0; attempt < 4; attempt++) {
+    // Refetch the leaf each try — it changes if the chat moved on or a
+    // previous attempt landed a message before erroring mid-generation.
+    const parent = await leafMessageUuid(org, convId);
     const res = await fetch(url, {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body,
+      body: JSON.stringify({
+        prompt: text,
+        parent_message_uuid: parent,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
+        attachments: [],
+        files: [],
+        rendering_mode: "messages",
+      }),
     });
     if (res.ok) {
       // Response is SSE for a generation that continues server-side — drain
@@ -145,11 +163,12 @@ export async function postChatMessage(text: string): Promise<void> {
       await Promise.race([res.text(), sleep(15_000)]);
       return;
     }
-    lastStatus = res.status;
-    // 409 = a completion is already in-flight for this conversation; the
-    // conflict is transient, so wait it out and retry.
+    const detail = (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 200);
+    lastError = `completion -> ${res.status}${detail ? ` ${detail}` : ""}`;
+    // 409 = the conversation is in a conflicting state (e.g. a completion
+    // in-flight); transient, so wait it out and retry with a fresh leaf.
     if (res.status !== 409) break;
     await sleep(2000 * (attempt + 1));
   }
-  throw new Error(`completion -> ${lastStatus}`);
+  throw new Error(lastError);
 }
