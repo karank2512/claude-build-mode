@@ -3,7 +3,7 @@ import type { ContentScriptDefinition } from "wxt";
 import { browser } from "wxt/browser";
 import type { ServerMessage } from "@cbm/shared";
 import { bus, onBridgeMessage, onBridgeState, type BridgeState } from "../lib/bus";
-import { currentConvId, fetchTranscript } from "../lib/claudeApi";
+import { currentConvId, fetchTranscript, postChatMessage } from "../lib/claudeApi";
 import { openStartModal } from "../ui/modal";
 import { BuildPanel } from "../ui/panel";
 import { BUTTON_CSS } from "../ui/styles";
@@ -19,6 +19,10 @@ const definition: ContentScriptDefinition = defineContentScript({
     let panel: BuildPanel | null = null;
     let fab: HTMLButtonElement | null = null;
     let fabHost: HTMLDivElement | null = null;
+    // write-back state for the active session
+    let writeBackEnabled = false;
+    let sessionCwd = "";
+    let filesChanged = new Set<string>();
 
     bus();
 
@@ -113,6 +117,9 @@ const definition: ContentScriptDefinition = defineContentScript({
       }
       p.sys(`got ${transcript.turns.length} turns (${transcript.source}) — starting agent…`);
       await browser.storage.local.set({ recentDir: result.opts.cwd });
+      writeBackEnabled = result.opts.writeBack;
+      sessionCwd = result.opts.cwd;
+      filesChanged = new Set();
 
       bus().send({
         type: "start_session",
@@ -136,6 +143,28 @@ const definition: ContentScriptDefinition = defineContentScript({
       }
     });
 
+    async function postBuildUpdate(resultText: string): Promise<void> {
+      const files = [...filesChanged];
+      const text = [
+        "[Build mode — automated update]",
+        "",
+        `The Claude Code agent just finished a build step in ${sessionCwd}.`,
+        "",
+        `What it did: ${resultText.slice(0, 1500)}`,
+        files.length ? `\nFiles changed: ${files.slice(0, 30).join(", ")}` : "",
+        "",
+        "Please be aware of these changes going forward in this conversation.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      try {
+        await postChatMessage(text);
+        panel?.sys("posted update into this chat");
+      } catch (e) {
+        panel?.error(`chat write-back failed: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+
     onBridgeMessage((msg: ServerMessage) => {
       if (msg.type === "session_started" && msg.convId === currentConvId()) {
         sessionId = msg.sessionId;
@@ -146,6 +175,23 @@ const definition: ContentScriptDefinition = defineContentScript({
         sessionId = null;
         setFab("⚡ Start building", false);
         return;
+      }
+      // Track file changes + results for chat write-back.
+      if (msg.type === "agent_event" && msg.sessionId === sessionId) {
+        const e = msg.event;
+        if (e.type === "assistant") {
+          for (const b of e.message?.content ?? []) {
+            if (
+              b.type === "tool_use" &&
+              ["Write", "Edit", "NotebookEdit", "MultiEdit"].includes(String(b.name))
+            ) {
+              const fp = (b.input as Record<string, unknown>)?.file_path;
+              if (fp) filesChanged.add(String(fp));
+            }
+          }
+        } else if (e.type === "result" && writeBackEnabled && !e.is_error) {
+          void postBuildUpdate(String(e.result ?? ""));
+        }
       }
       // Route session-scoped messages to the panel.
       if ("sessionId" in msg && msg.sessionId === sessionId) panel?.handleMessage(msg);

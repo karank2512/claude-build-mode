@@ -5,6 +5,7 @@ export interface StartOptions {
   cwd: string;
   profile: PermissionProfile;
   prompt: string;
+  writeBack: boolean;
 }
 
 export interface ModalResult {
@@ -108,6 +109,18 @@ export function openStartModal(deps: ModalDeps): Promise<ModalResult | null> {
       promptField.append(el("div", "hint", "Leave blank and the agent infers the task from the chat."));
       modal.appendChild(promptField);
 
+      const wbField = el("div", "cbm-field");
+      const wbLabel = el("label", "");
+      const wb = document.createElement("input");
+      wb.type = "checkbox";
+      wb.checked = true;
+      wb.style.marginRight = "6px";
+      wbLabel.append(wb, document.createTextNode("Post build updates into this chat"));
+      wbLabel.style.fontWeight = "400";
+      wbField.appendChild(wbLabel);
+      wbField.append(el("div", "hint", "So chat-Claude sees what the agent did and you can keep discussing it here."));
+      modal.appendChild(wbField);
+
       const row = el("div", "cbm-row");
       const cancel = el("button", "cbm-btn ghost", "Cancel") as HTMLButtonElement;
       cancel.onclick = () => done(null);
@@ -115,7 +128,7 @@ export function openStartModal(deps: ModalDeps): Promise<ModalResult | null> {
       go.onclick = () => {
         const cwd = dirInput.value.trim();
         if (!cwd) return;
-        done({ kind: "start", opts: { cwd, profile: select.value as PermissionProfile, prompt: ta.value.trim() } });
+        done({ kind: "start", opts: { cwd, profile: select.value as PermissionProfile, prompt: ta.value.trim(), writeBack: wb.checked } });
       };
       row.append(cancel, go);
       modal.appendChild(row);
