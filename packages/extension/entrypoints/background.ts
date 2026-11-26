@@ -149,13 +149,15 @@ const definition: BackgroundDefinition = defineBackground(() => {
   // Sniffer → storage: ring of recent /api/ POST shapes; postChatMessage
   // picks the one that looks like a chat-send.
   browser.runtime.onMessage.addListener((raw: unknown) => {
-    const m = raw as { kind?: string; url?: string; body?: unknown };
-    if (m?.kind !== "captureCompletion" || typeof m.url !== "string" || !m.body) return;
+    const m = raw as { kind?: string; url?: string; ws?: string; body?: unknown };
+    if (m?.kind !== "captureCompletion" || !m.body) return;
+    if (typeof m.url !== "string" && typeof m.ws !== "string") return;
     void (async () => {
-      const { capturedApiPosts } = await browser.storage.local.get("capturedApiPosts");
-      const posts = Array.isArray(capturedApiPosts) ? capturedApiPosts : [];
-      posts.push({ url: m.url, body: m.body, capturedAt: Date.now() });
-      await browser.storage.local.set({ capturedApiPosts: posts.slice(-8) });
+      const key = typeof m.ws === "string" ? "capturedWsFrames" : "capturedApiPosts";
+      const existing = (await browser.storage.local.get(key))[key];
+      const posts = Array.isArray(existing) ? existing : [];
+      posts.push({ url: m.url ?? m.ws, body: m.body, capturedAt: Date.now() });
+      await browser.storage.local.set({ [key]: posts.slice(-8) });
     })();
   });
 

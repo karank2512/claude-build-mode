@@ -37,6 +37,26 @@ export default defineContentScript({
       return origFetch.apply(this, [input, init] as never);
     } as typeof fetch;
 
+    // The unified experience may send chat over a WebSocket instead of REST.
+    const origWsSend = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (this: WebSocket, data: unknown) {
+      try {
+        if (typeof data === "string" && data.length < 20000) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(data);
+          } catch {}
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            window.postMessage(
+              { source: "cbm-sniffer", ws: this.url, body: parsed },
+              "*",
+            );
+          }
+        }
+      } catch {}
+      return origWsSend.call(this, data as never);
+    };
+
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open = function (

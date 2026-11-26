@@ -37,7 +37,12 @@ const definition: ContentScriptDefinition = defineContentScript({
         panel?.sys("captured this app's message-send — write-back will replay it");
       }
       void browser.runtime
-        .sendMessage({ kind: "captureCompletion", url: ev.data.url, body: ev.data.body })
+        .sendMessage({
+          kind: "captureCompletion",
+          url: ev.data.url,
+          ws: ev.data.ws,
+          body: ev.data.body,
+        })
         .catch(() => {});
     });
 
