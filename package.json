@@ -1,0 +1,16 @@
+{
+  "name": "claude-build-mode",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "bridge": "npm run dev -w @cbm/bridge",
+    "ext:dev": "npm run dev -w @cbm/extension",
+    "ext:build": "npm run build -w @cbm/extension",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
+  }
+}
