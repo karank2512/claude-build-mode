@@ -32,19 +32,37 @@ export default defineContentScript({
         const method = (
           init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET")
         ).toUpperCase();
-        if (method === "POST" && url.includes("/api/")) report(url, init?.body);
+        if (method === "POST" && url.includes("/api/")) {
+          if (typeof init?.body === "string") {
+            report(url, init.body);
+          } else if (typeof Request !== "undefined" && input instanceof Request) {
+            // Body lives inside the Request object — clone before consuming.
+            input
+              .clone()
+              .text()
+              .then((t) => report(url, t))
+              .catch(() => {});
+          }
+        }
       } catch {}
       return origFetch.apply(this, [input, init] as never);
     } as typeof fetch;
 
     // The unified experience may send chat over a WebSocket instead of REST.
     const origWsSend = WebSocket.prototype.send;
+    const decoder = new TextDecoder();
     WebSocket.prototype.send = function (this: WebSocket, data: unknown) {
       try {
-        if (typeof data === "string" && data.length < 20000) {
+        const text =
+          typeof data === "string"
+            ? data
+            : data instanceof ArrayBuffer || ArrayBuffer.isView(data)
+              ? decoder.decode(data)
+              : null;
+        if (text && text.length < 20000) {
           let parsed: unknown;
           try {
-            parsed = JSON.parse(data);
+            parsed = JSON.parse(text);
           } catch {}
           if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
             window.postMessage(
@@ -56,6 +74,17 @@ export default defineContentScript({
       } catch {}
       return origWsSend.call(this, data as never);
     };
+
+    // Beacon fallback (string payloads only).
+    if (navigator.sendBeacon) {
+      const origBeacon = navigator.sendBeacon.bind(navigator);
+      navigator.sendBeacon = (url: string | URL, data?: unknown) => {
+        try {
+          if (typeof data === "string") report(String(url), data);
+        } catch {}
+        return origBeacon(url, data as never);
+      };
+    }
 
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
