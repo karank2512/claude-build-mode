@@ -181,7 +181,11 @@ const definition: ContentScriptDefinition = defineContentScript({
         await postChatMessage(text);
         panel?.sys("posted update into this chat");
       } catch (e) {
-        panel?.error(`chat write-back failed: ${e instanceof Error ? e.message : e}`);
+        const m = e instanceof Error ? e.message : String(e);
+        // Migrated chats reject writes outright — informational, not a failure.
+        if (m.includes("new Claude experience"))
+          panel?.sys("chat write-back unavailable — chat is on the new Claude experience");
+        else panel?.error(`chat write-back failed: ${m}`);
       }
     }
 

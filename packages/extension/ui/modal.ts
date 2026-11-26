@@ -113,12 +113,12 @@ export function openStartModal(deps: ModalDeps): Promise<ModalResult | null> {
       const wbLabel = el("label", "");
       const wb = document.createElement("input");
       wb.type = "checkbox";
-      wb.checked = true;
+      wb.checked = false;
       wb.style.marginRight = "6px";
       wbLabel.append(wb, document.createTextNode("Post build updates into this chat"));
       wbLabel.style.fontWeight = "400";
       wbField.appendChild(wbLabel);
-      wbField.append(el("div", "hint", "So chat-Claude sees what the agent did and you can keep discussing it here."));
+      wbField.append(el("div", "hint", "So chat-Claude sees what the agent did. Experimental — chats on the new Claude experience can't be written to."));
       modal.appendChild(wbField);
 
       const row = el("div", "cbm-row");
