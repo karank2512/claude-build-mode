@@ -5,6 +5,7 @@ import type { ClientMessage, ServerMessage } from "@cbm/shared";
 
 type PortMsg =
   | { kind: "toBridge"; msg: ClientMessage }
+  | { kind: "reconnect" }
   | { kind: "getState" };
 
 const DEFAULT_PORT = 17819;
@@ -108,6 +109,11 @@ const definition: BackgroundDefinition = defineBackground(() => {
     port.onMessage.addListener((raw: PortMsg) => {
       if (raw.kind === "toBridge" && ws?.readyState === WebSocket.OPEN && authed) {
         ws.send(JSON.stringify(raw.msg));
+      } else if (raw.kind === "reconnect") {
+        try {
+          ws?.close();
+        } catch {}
+        void connect();
       } else if (raw.kind === "getState") {
         try {
           port.postMessage({ kind: "bridgeState", state: wsState, authed });

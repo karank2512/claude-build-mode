@@ -19,6 +19,14 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
   return e;
 }
 
+// Keep claude.ai's document-level handlers from stealing our input events.
+function shield<T extends HTMLElement>(input: T): T {
+  for (const evt of ["keydown", "keypress", "keyup", "paste", "copy", "cut"]) {
+    input.addEventListener(evt, (e) => e.stopPropagation());
+  }
+  return input;
+}
+
 export interface ModalDeps {
   authed: boolean;
   defaultDir: string;
@@ -50,7 +58,7 @@ export function openStartModal(deps: ModalDeps): Promise<ModalResult | null> {
       modal.appendChild(warn);
       const field = el("div", "cbm-field");
       field.append(el("label", "", "Bridge token"));
-      const input = document.createElement("input");
+      const input = shield(document.createElement("input"));
       input.type = "text";
       input.placeholder = "paste token…";
       field.appendChild(input);
@@ -68,7 +76,7 @@ export function openStartModal(deps: ModalDeps): Promise<ModalResult | null> {
     } else {
       const dirField = el("div", "cbm-field");
       dirField.append(el("label", "", "Project folder"));
-      const dirInput = document.createElement("input");
+      const dirInput = shield(document.createElement("input"));
       dirInput.type = "text";
       dirInput.value = deps.defaultDir;
       dirInput.placeholder = "~/projects/my-app";
@@ -94,7 +102,7 @@ export function openStartModal(deps: ModalDeps): Promise<ModalResult | null> {
 
       const promptField = el("div", "cbm-field");
       promptField.append(el("label", "", "First instruction (optional)"));
-      const ta = document.createElement("textarea");
+      const ta = shield(document.createElement("textarea"));
       ta.placeholder = "e.g. Build the CLI we just designed — start with the parser.";
       promptField.appendChild(ta);
       promptField.append(el("div", "hint", "Leave blank and the agent infers the task from the chat."));

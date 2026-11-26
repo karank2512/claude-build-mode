@@ -65,6 +65,12 @@ export class BuildPanel {
     const footer = el("div", "cbm-footer");
     this.input = document.createElement("input");
     this.input.placeholder = "Steer the build…";
+    // The host page (claude.ai) listens at document level for paste/keys and
+    // would steal them into the chat composer — keep our events inside the
+    // shadow root.
+    for (const evt of ["keydown", "keypress", "keyup", "paste", "copy", "cut"]) {
+      this.input.addEventListener(evt, (e) => e.stopPropagation());
+    }
     this.input.onkeydown = (e) => {
       if (e.key === "Enter" && this.input.value.trim()) {
         this.cb.onSteer(this.input.value.trim());

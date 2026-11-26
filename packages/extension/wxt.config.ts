@@ -2,6 +2,7 @@ import { defineConfig } from "wxt";
 
 export default defineConfig({
   srcDir: ".",
+  outDir: "dist",
   manifest: {
     name: "Build Mode for Claude",
     short_name: "BuildMode",
@@ -13,6 +14,8 @@ export default defineConfig({
       "https://claude.ai/*",
       "http://127.0.0.1:17819/*",
       "http://localhost:17819/*",
+      "ws://127.0.0.1:17819/*",
+      "ws://localhost:17819/*",
     ],
     action: {
       default_title: "Build Mode",

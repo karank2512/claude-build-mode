@@ -12,7 +12,7 @@ const stateListeners = new Set<StateListener>();
 let lastState: BridgeState = "closed";
 let lastAuthed = false;
 
-export function bus(): { send: (m: ClientMessage) => void } {
+export function bus(): { send: (m: ClientMessage) => void; reconnect: () => void } {
   if (!port) {
     port = browser.runtime.connect({ name: "cbm" });
     port.onMessage.addListener((raw) => {
@@ -36,6 +36,13 @@ export function bus(): { send: (m: ClientMessage) => void } {
     send(m: ClientMessage) {
       try {
         port?.postMessage({ kind: "toBridge", msg: m });
+      } catch {
+        port = null;
+      }
+    },
+    reconnect() {
+      try {
+        port?.postMessage({ kind: "reconnect" });
       } catch {
         port = null;
       }

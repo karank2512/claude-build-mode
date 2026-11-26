@@ -89,9 +89,15 @@ const definition: ContentScriptDefinition = defineContentScript({
       const result = await openStartModal({
         authed: bridgeAuthed,
         defaultDir: typeof recentDir === "string" ? recentDir : "~/projects",
-        onSaveToken: async (token) => {
+        onSaveToken: async (raw) => {
+          // Accept a bare token or a pasted bridge.json blob.
+          let token = raw.trim().replace(/^"|"$/g, "");
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed?.token) token = String(parsed.token);
+          } catch {}
           await browser.storage.local.set({ bridgeToken: token });
-          // background reconnects on its retry timer; nudge via port reopen
+          bus().reconnect();
         },
       });
       if (!result) return;

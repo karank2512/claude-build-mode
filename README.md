@@ -34,7 +34,7 @@ to claude via `--permission-prompt-tool`.
 2. Start the bridge: `npm run bridge` (creates `~/.config/claude-build-mode/bridge.json`)
 3. Build the extension: `npm run ext:build`
 4. Chrome → `chrome://extensions` → Developer mode → **Load unpacked** →
-   `packages/extension/.output/chrome-mv3`
+   `packages/extension/dist/chrome-mv3`
 5. Open a chat on claude.ai → click **⚡ Start building** → paste the bridge
    token (first time only) → pick a project folder → go
 
