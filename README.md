@@ -1,50 +1,106 @@
 # Build Mode for Claude
 
-One-click switch from a Claude chat into a local Claude Code build session —
-same page, same conversation context, your own plan. No handoff doc, no
-copy-paste, no API credits.
+**Switch a Claude chat into a build session with one click — same page, same
+conversation, your own plan.**
 
-## What it does
+You're halfway through a chat on claude.ai when you realize you want the thing
+built, not discussed. Today that means asking for a handoff doc, copying it,
+opening Claude Code, pasting, and re-explaining. Build Mode deletes that whole
+transition: click **⚡ Start building** and the conversation you're already in
+becomes the context for a real Claude Code session on your machine — file
+edits, shell commands, tool approvals, live progress — without leaving the
+page.
 
-- Injects a **⚡ Start building** button into any `claude.ai/chat/*` page
-- Pulls the real transcript via claude.ai's own internal API (your session
-  cookie never leaves the browser)
-- Spawns `claude` headless (`stream-json` in/out) in a project folder you pick,
-  signed in as *you* — usage counts against your Claude plan, not API credits
-- Streams agent progress (text, tool calls, file edits, cost) into a panel
-  docked on the same page; permission prompts are answered there
-- You keep chatting while it builds; steer the agent from the panel input
-
-## Architecture
+## How it works
 
 ```
-packages/extension/   Chrome MV3 (WXT + TS): button, modal, panel, WS relay
-packages/bridge/      Node daemon: spawns claude, relays events, permission MCP
-packages/shared/      Wire protocol + claude.ai API / stream-json types
+claude.ai chat page
+        │
+        ▼  ⚡ Start building
+┌─────────────────────────────┐
+│  Chrome extension           │  pulls the real transcript via claude.ai's own
+│  (content script + panel)   │  same-origin API — your session cookie never
+└──────────────┬──────────────┘  leaves the browser
+               │ ws://127.0.0.1:17819 (token-gated)
+               ▼
+┌─────────────────────────────┐
+│  Local bridge (Node)        │  spawns `claude` headless in the project
+│                             │  folder you picked, relays every event,
+└──────────────┬──────────────┘  serves permission prompts back to the page
+               │
+               ▼
+        claude CLI (your login → your plan quota, zero API credits)
 ```
 
-Extension ⇄ bridge over `ws://127.0.0.1:17819` (token in
-`~/.config/claude-build-mode/bridge.json`, created on first run).
-Tool-permission prompts reach the UI through an MCP server the bridge exposes
-to claude via `--permission-prompt-tool`.
+- **Full transcript, not a summary** — every turn you discussed, seeded into the
+  agent's first message (plus saved to a file it can re-read)
+- **Approvals where you already are** — each risky tool call surfaces as a
+  card in the page-side panel via Claude Code's `--permission-prompt-tool`
+  MCP hook: Allow / Deny / Always
+- **Steer while it works** — the panel's input drops messages straight into
+  the running agent, mid-task
+- **Keep chatting** — the real conversation stays fully usable while the
+  build runs alongside it
+
+## Status
+
+Working MVP. Verified live on claude.ai: transcript → agent → Edit/Bash tool
+calls with in-page approvals → done, with multi-turn steering.
 
 ## Dev setup
 
-1. `npm install`
-2. Start the bridge: `npm run bridge` (creates `~/.config/claude-build-mode/bridge.json`)
-3. Build the extension: `npm run ext:build`
-4. Chrome → `chrome://extensions` → Developer mode → **Load unpacked** →
-   `packages/extension/dist/chrome-mv3`
-5. Open a chat on claude.ai → click **⚡ Start building** → paste the bridge
-   token (first time only) → pick a project folder → go
+Requirements: Chrome, Node ≥ 20, `claude` CLI installed and logged in with
+your claude.ai account (Claude Code is included in Pro/Max plans — that's the
+whole "no credits" mechanism).
 
-Requires `claude` CLI installed and logged in with your claude.ai account.
+```bash
+npm install
+npm run bridge      # local daemon; creates ~/.config/claude-build-mode/bridge.json
+npm run ext:build   # produces packages/extension/dist/chrome-mv3
+```
 
-## Limitations
+Then: `chrome://extensions` → Developer mode → **Load unpacked** →
+`packages/extension/dist/chrome-mv3`. Open any `claude.ai/chat/<id>` page,
+click ⚡, paste the bridge token once (from `bridge.json`), pick a project
+folder, go.
 
-- Agent output renders in our panel, not as native claude.ai messages
-  (phase 2 adds status write-back into the real chat)
-- Uses claude.ai's undocumented internal API — behind an adapter with a DOM
-  fallback, but it can drift
-- Localhost WebSocket transport for dev; native messaging host is the
-  production path (todo)
+## Repo layout
+
+```
+packages/extension/   Chrome MV3 (WXT + TypeScript): injected button, start
+                      modal, build panel, service-worker WS relay
+packages/bridge/      Node daemon: claude process manager, session registry,
+                      permission MCP server, WS transport
+packages/shared/      Wire protocol + claude.ai API / stream-json types
+```
+
+## Security model
+
+- Nothing leaves your machine: the chat transcript goes from the page to a
+  localhost bridge; the agent runs under *your* `claude` login
+- The bridge binds `127.0.0.1` only and requires a token generated on first
+  run (`~/.config/claude-build-mode/bridge.json`, mode 600)
+- Tool permissions default to "ask before each risky action"; there's also
+  auto-accept-edits and plan-only profiles
+
+## Known limitations
+
+- Agent output renders in our injected panel, not as native claude.ai
+  messages (write-back into the real chat is on the roadmap below)
+- Uses claude.ai's undocumented internal API for transcript read — behind an
+  adapter with a DOM fallback, but it can drift
+- Localhost-WebSocket transport requires a running bridge + manual token;
+  native messaging (below) removes that
+- Chrome only, for now
+
+## Roadmap
+
+- [ ] Post build status back into the real conversation so chat-Claude stays
+      aware of what the agent did
+- [ ] Native messaging host + installer: no token paste, no manual daemon
+- [ ] Diff rendering, finer-grained permission controls, resume UX
+- [ ] Edge/Firefox ports, Web Store release
+
+## License
+
+MIT
