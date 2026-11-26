@@ -11,96 +11,151 @@ becomes the context for a real Claude Code session on your machine — file
 edits, shell commands, tool approvals, live progress — without leaving the
 page.
 
+## Requirements
+
+- Chrome (or a Chromium browser) on **macOS or Linux**
+- Node ≥ 20
+- `claude` CLI installed and signed in to your claude.ai account — the agent
+  runs on **your plan quota** (Claude Code is included in Pro/Max), so usage
+  costs **zero API credits** and nothing is ever billed to the extension's
+  author
+
+## Install (~5 minutes)
+
+```bash
+git clone https://github.com/karank2512/claude-build-mode
+cd claude-build-mode
+npm ci
+npm run ext:build        # builds packages/extension/dist/chrome-mv3
+```
+
+1. `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
+   select `packages/extension/dist/chrome-mv3`. Copy the **extension ID** from
+   the card.
+2. Install the native messaging host (lets Chrome spawn the bridge itself —
+   no daemon, no token):
+
+   ```bash
+   npm run install-host -w @cbm/bridge -- --ext-id <paste-extension-id>
+   ```
+
+3. **Fully quit and relaunch Chrome** — native hosts are discovered at
+   startup.
+
+## Use it
+
+Open any `claude.ai/chat/<id>` conversation → click **⚡ Start building**
+(bottom-right) → pick a project folder → optionally type a first instruction
+(or leave blank — the agent reads the transcript and infers the task) → go.
+
+- **Live progress** in a docked side panel: agent text, tool calls, diffs
+- **Approvals in-page** — Allow / Deny / Always for each risky action
+- **Steer mid-run** from the panel's bottom input
+- **Keep chatting** — the real conversation stays usable while the build runs
+- **Resume later** — clicking ⚡ on the same chat reattaches or resumes the
+  existing session (survives page reloads)
+
 ## How it works
 
 ```
 claude.ai chat page
-        │
-        ▼  ⚡ Start building
+        │  ⚡ Start building
+        ▼
 ┌─────────────────────────────┐
-│  Chrome extension           │  pulls the real transcript via claude.ai's own
-│  (content script + panel)   │  same-origin API — your session cookie never
-└──────────────┬──────────────┘  leaves the browser
-               │ ws://127.0.0.1:17819 (token-gated)
+│  Chrome extension           │  pulls the full transcript via claude.ai's own
+│  (content script + panel)   │  same-origin internal API — session cookies
+└──────────────┬──────────────┘  never leave the browser
+               │ native messaging (Chrome spawns it; no token)
                ▼
 ┌─────────────────────────────┐
-│  Local bridge (Node)        │  spawns `claude` headless in the project
-│                             │  folder you picked, relays every event,
-└──────────────┬──────────────┘  serves permission prompts back to the page
+│  Local bridge (Node)        │  spawns `claude` headless in your chosen
+│                             │  project folder, relays every stream-json
+└──────────────┬──────────────┘  event, and answers permission prompts
                │
                ▼
-        claude CLI (your login → your plan quota, zero API credits)
+        claude CLI → your login → your plan quota
 ```
 
-- **Full transcript, not a summary** — every turn you discussed, seeded into the
-  agent's first message (plus saved to a file it can re-read)
-- **Approvals where you already are** — each risky tool call surfaces as a
-  card in the page-side panel via Claude Code's `--permission-prompt-tool`
-  MCP hook: Allow / Deny / Always
-- **Steer while it works** — the panel's input drops messages straight into
-  the running agent, mid-task
-- **Keep chatting** — the real conversation stays fully usable while the
-  build runs alongside it
+Permission prompts ride Claude Code's `--permission-prompt-tool` MCP hook: the
+bridge hosts an MCP `ask` tool per session, and claude calls it before any
+risky action — the request lands in the panel for your decision.
 
-## Status
+## Security model
 
-Working MVP. Verified live on claude.ai: transcript → agent → Edit/Bash tool
-calls with in-page approvals → done, with multi-turn steering.
+- **Nothing leaves your machine.** The transcript goes from the page to a
+  localhost bridge; the agent runs under your own `claude` login.
+- Native messaging transport is spawned by Chrome on-demand — stdio channel,
+  no listening socket, no token. (The `ws://127.0.0.1:17819` dev fallback is
+  token-gated and binds loopback only; token lives in
+  `~/.config/claude-build-mode/bridge.json`, mode 600.)
+- Permission profile defaults to *ask before each risky action*;
+  auto-accept-edits and plan-only profiles are selectable per build.
+- Transcript seed files and the session registry live under
+  `~/.config/claude-build-mode/` — nothing is uploaded anywhere.
 
-## Dev setup
+## Chat write-back (experimental)
 
-Requirements: Chrome, Node ≥ 20, `claude` CLI installed and logged in with
-your claude.ai account (Claude Code is included in Pro/Max plans — that's the
-whole "no credits" mechanism).
+Optionally, the extension can post a compact status update **into the real
+conversation** when a build turn finishes, so chat-Claude knows what the agent
+did. Enable it in the start modal.
+
+Caveat: Anthropic is migrating chats to the "new Claude experience" (unified
+backend) — those conversations reject external writes (`409`), so write-back
+is silently skipped there. On unmigrated chats it posts as a normal user
+message.
+
+## Dev mode (WS fallback)
+
+If the native host can't be installed (e.g. Windows) or you want the daemon:
 
 ```bash
-npm install
-npm run bridge      # local daemon; creates ~/.config/claude-build-mode/bridge.json
-npm run ext:build   # produces packages/extension/dist/chrome-mv3
+npm run bridge     # local WS daemon on 127.0.0.1:17819
 ```
 
-Then: `chrome://extensions` → Developer mode → **Load unpacked** →
-`packages/extension/dist/chrome-mv3`. Open any `claude.ai/chat/<id>` page,
-click ⚡, paste the bridge token once (from `bridge.json`), pick a project
-folder, go.
+Then in the ⚡ modal's token field, paste the token from
+`~/.config/claude-build-mode/bridge.json`. The extension prefers native
+messaging and falls back to WS automatically.
+
+```bash
+npm run dev -w @cbm/extension   # rebuild extension on change
+npm run typecheck               # both packages
+```
 
 ## Repo layout
 
 ```
 packages/extension/   Chrome MV3 (WXT + TypeScript): injected button, start
-                      modal, build panel, service-worker WS relay
-packages/bridge/      Node daemon: claude process manager, session registry,
-                      permission MCP server, WS transport
+                      modal, build panel, service-worker relay, MAIN-world
+                      request sniffer
+packages/bridge/      Node bridge: claude process manager, session registry,
+                      permission MCP server, native host + WS transports,
+                      installer
 packages/shared/      Wire protocol + claude.ai API / stream-json types
 ```
-
-## Security model
-
-- Nothing leaves your machine: the chat transcript goes from the page to a
-  localhost bridge; the agent runs under *your* `claude` login
-- The bridge binds `127.0.0.1` only and requires a token generated on first
-  run (`~/.config/claude-build-mode/bridge.json`, mode 600)
-- Tool permissions default to "ask before each risky action"; there's also
-  auto-accept-edits and plan-only profiles
 
 ## Known limitations
 
 - Agent output renders in our injected panel, not as native claude.ai
-  messages (write-back into the real chat is on the roadmap below)
-- Uses claude.ai's undocumented internal API for transcript read — behind an
-  adapter with a DOM fallback, but it can drift
-- Localhost-WebSocket transport requires a running bridge + manual token;
-  native messaging (below) removes that
-- Chrome only, for now
+  messages — a third party cannot write tool calls into Anthropic's chat
+  backend. Write-back (above) is the partial workaround.
+- Transcript read uses claude.ai's undocumented internal API — behind an
+  adapter with a DOM fallback, but it can drift.
+- The native host lives while Chrome holds the messaging port — quitting
+  Chrome fully stops a running build (it's resumable from the registry).
+- Chrome-family browsers only; installer covers macOS + Linux (Windows: WS
+  fallback only, for now).
+- Anthropic is converging on this natively (unified Chat+Cowork, Dispatch →
+  Code) — this may be redundant eventually; today the native path still can't
+  reuse a chat as a build session.
 
 ## Roadmap
 
-- [x] Post build status back into the real conversation so chat-Claude stays
-      aware of what the agent did
-- [x] Native messaging host + installer: no token paste, no manual daemon
-      (`npm run install-host -w @cbm/bridge -- --ext-id <id>`)
-- [ ] Diff rendering, finer-grained permission controls, resume UX
-- [ ] Edge/Firefox ports, Web Store release
+- [~] Chat write-back — works on unmigrated chats; skipped on the new unified
+      backend
+- [x] Native messaging host + installer (no token paste, no manual daemon)
+- [x] Diff rendering, "Always {tool}" approvals, reattach-after-reload
+- [ ] Windows native-messaging installer, Edge/Firefox ports
+- [ ] Web Store release
 
 ## License
 

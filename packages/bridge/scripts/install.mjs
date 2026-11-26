@@ -25,6 +25,17 @@ if (extIds.length === 0) {
   );
   process.exit(1);
 }
+if (process.platform === "win32") {
+  console.error(
+    "Windows isn't supported by this installer yet — native-messaging manifests live in the registry. " +
+      "The WS fallback (npm run bridge) still works.",
+  );
+  process.exit(1);
+}
+if (process.platform !== "darwin" && process.platform !== "linux") {
+  console.error(`Unsupported platform: ${process.platform}`);
+  process.exit(1);
+}
 if (!existsSync(bundle)) {
   console.error(`${bundle} not found — run \`npm run bundle\` in packages/bridge first.`);
   process.exit(1);
@@ -53,15 +64,25 @@ const manifest = {
   allowed_origins: extIds.map((id) => `chrome-extension://${id}/`),
 };
 
-const chromeDirs = [
-  "Google/Chrome",
-  "Google/Chrome Beta",
-  "Google/Chrome Canary",
-  "Microsoft Edge",
-  "BraveSoftware/Brave-Browser",
-  "Chromium",
-];
-const appSupport = join(homedir(), "Library", "Application Support");
+// Native-messaging manifest directories per OS.
+const isMac = process.platform === "darwin";
+const chromeDirs = isMac
+  ? [
+      "Google/Chrome",
+      "Google/Chrome Beta",
+      "Google/Chrome Canary",
+      "Microsoft Edge",
+      "BraveSoftware/Brave-Browser",
+      "Chromium",
+    ]
+  : process.platform === "linux"
+    ? ["google-chrome", "google-chrome-beta", "microsoft-edge", "BraveSoftware/Brave-Browser", "chromium"]
+    : [];
+const appSupport = isMac
+  ? join(homedir(), "Library", "Application Support")
+  : process.platform === "linux"
+    ? join(homedir(), ".config")
+    : "";
 
 let installed = 0;
 for (const dir of chromeDirs) {
